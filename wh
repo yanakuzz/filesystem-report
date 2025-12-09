@@ -1,0 +1,78 @@
+import os
+import sqlite3
+import datetime
+import pandas as pd
+
+path = 'db' 
+output_csv = 'db/out.csv'
+db = 'database.db'
+data_list = []
+
+def get_item_info(path):
+    if not os.path.exists(path):
+        raise FileNotFoundError('The path does not exists.')
+
+    location =  os.path.abspath(path)
+    item_type = 'file' if os.path.isfile(path) else 'directory'
+
+    parts = location.split(os.sep)
+    depth = len(parts) - 1
+
+    date_of_creating = datetime.datetime.fromtimestamp(os.path.getctime(path)).strftime('%d.%m.%Y')
+    date_of_editing = datetime.datetime.fromtimestamp(os.path.getmtime(path)).strftime('%d.%m.%Y')
+
+    size = os.path.getsize(path) if item_type == 'file' else None
+
+    extension = os.path.splitext(path)[1] if item_type == 'file' else None
+
+    data_list.append({
+        'location': location,
+        'item_type' : item_type,
+        'depth' : depth,
+        'date_of_creating': date_of_creating,
+        'date_of_editing' : date_of_editing,
+        'size' : size,
+        'extension': extension
+    })
+
+if os.path.isdir(path):
+    for root, dirs, files in os.walk(path):
+        get_item_info(root)
+        for f in files:
+            get_item_info(os.path.join(root, f))
+else:
+    get_item_info(path)
+
+df = pd.DataFrame(data_list)
+df.to_csv('db/out.csv', index_label = 'id', sep='|')
+
+with sqlite3.connect('database.db') as db:
+    cursor = db.cursor()
+
+    cursor.execute("""
+            CREATE TABLE IF NOT EXISTS data(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            loaction TEXT UNIQUE NOT NULL,
+            item_type VARCHAR,
+            date_of_creting TEXT,
+            date_of_creating TEXT,
+            size INTEGER,
+            extension TEXT
+        )""")
+
+    sql_upsert = """
+    INSERT INTO data(location, item_type, depth, date_of_creating, date_of_editing, size, extension)
+    VALUES(?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(location) DO UPDATE SET
+        item_type = EXCLUDED.item_type,
+        depth = EXCLUDED.depth,
+        date_of_creating = EXCLUDED.date_of_creating,
+        date_of_editing = EXCLUDED.date_of_editing,
+        size = EXCLUDED.size,
+        extension = EXCLUDED.extension
+    """
+    cursor.executemany(sql_upsert, df.values.tolist())
+
+    cursor.execute("SELECT * FROM data")                    
+
+
