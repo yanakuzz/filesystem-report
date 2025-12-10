@@ -3,27 +3,27 @@ import sqlite3
 import datetime
 import pandas as pd
 
-path = 'db' 
+base_path = 'db' 
 output_csv = 'db/out.csv'
 db = 'database.db'
 data_list = []
 
-def get_item_info(path):
-    if not os.path.exists(path):
+def get_item_info(base_path):
+    if not os.path.exists(base_path):
         raise FileNotFoundError('The path does not exists.')
 
-    location =  os.path.abspath(path)
-    item_type = 'file' if os.path.isfile(path) else 'directory'
+    location =  os.path.abspath(base_path)
+    item_type = 'file' if os.path.isfile(base_path) else 'directory'
 
     parts = location.split(os.sep)
     depth = len(parts) - 1
 
-    date_of_creating = datetime.datetime.fromtimestamp(os.path.getctime(path)).strftime('%d.%m.%Y')
-    date_of_editing = datetime.datetime.fromtimestamp(os.path.getmtime(path)).strftime('%d.%m.%Y')
+    date_of_creating = datetime.datetime.fromtimestamp(os.path.getctime(base_path)).strftime('%d.%m.%Y')
+    date_of_editing = datetime.datetime.fromtimestamp(os.path.getmtime(base_path)).strftime('%d.%m.%Y')
 
-    size = os.path.getsize(path) if item_type == 'file' else None
+    size = os.path.getsize(base_path) if item_type == 'file' else None
 
-    extension = os.path.splitext(path)[1] if item_type == 'file' else None
+    extension = os.path.splitext(base_path)[1] if item_type == 'file' else None
 
     data_list.append({
         'location': location,
@@ -35,13 +35,13 @@ def get_item_info(path):
         'extension': extension
     })
 
-if os.path.isdir(path):
-    for root, dirs, files in os.walk(path):
+if os.path.isdir(base_path):
+    for root, dirs, files in os.walk(base_path):
         get_item_info(root)
         for f in files:
             get_item_info(os.path.join(root, f))
 else:
-    get_item_info(path)
+    get_item_info(base_path)
 
 df = pd.DataFrame(data_list)
 df.to_csv('db/out.csv', index_label = 'id', sep='|')
@@ -52,10 +52,10 @@ with sqlite3.connect('database.db') as db:
     cursor.execute("""
             CREATE TABLE IF NOT EXISTS data(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            loaction TEXT UNIQUE NOT NULL,
+            loction TEXT UNIQUE NOT NULL,
             item_type VARCHAR,
-            date_of_creting TEXT,
-            date_of_creating TEXT,
+            date_of_crefting TEXT,
+            date_of_editing TEXT,
             size INTEGER,
             extension TEXT
         )""")
@@ -74,5 +74,6 @@ with sqlite3.connect('database.db') as db:
     cursor.executemany(sql_upsert, df.values.tolist())
 
     cursor.execute("SELECT * FROM data")                    
+
 
 
