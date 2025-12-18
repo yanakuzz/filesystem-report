@@ -1,4 +1,4 @@
-mport sqlite3
+import sqlite3
 import os
 import datetime
 from pathlib import Path
@@ -129,6 +129,7 @@ with sqlite3.connect('database.db') as db:
             location, item_type, depth, date_of_creating, date_of_editing,
             size, extension, valid_from, valid_to, is_active
     ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?) """, inserts)
+
 
 
 
