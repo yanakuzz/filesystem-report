@@ -1,79 +1,134 @@
+mport sqlite3
 import os
-import sqlite3
 import datetime
-import pandas as pd
+from pathlib import Path
 
-base_path = 'db' 
-output_csv = 'db/out.csv'
-db = 'database.db'
-data_list = []
+
+base_path = input('Определите корневой путь:')
+
+if not os.path.exists(base_path):
+    raise FileNotFoundError('Данного пути не существует.')
 
 def get_item_info(base_path):
-    if not os.path.exists(base_path):
-        raise FileNotFoundError('The path does not exists.')
 
-    location =  os.path.abspath(base_path)
-    item_type = 'file' if os.path.isfile(base_path) else 'directory'
+    return {
+        'location' : os.path.abspath(base_path),
+        'item_type' : 'file' if os.path.isfile(base_path) else 'directory',
+        'depth' : os.path.abspath(base_path).count(os.sep),
+        'date_of_creating' : datetime.datetime.fromtimestamp(os.path.getctime(base_path)).strftime('%d.%m.%Y'),
+        'date_of_editing'  : datetime.datetime.fromtimestamp(os.path.getmtime(base_path)).strftime('%d.%m.%Y'),
+        'size'  : os.path.getsize(base_path) if os.path.isfile(base_path) else None,
+        'extension' : os.path.splitext(base_path)[1] if os.path.isfile(base_path) else None
+    }
 
-    parts = location.split(os.sep)
-    depth = len(parts) - 1
+def get_data():
+    result = []
+    if os.path.isdir(base_path):
+        for root, dirs, files in os.walk(base_path):
+            info_fir = get_item_info(root)
+            if info_fir:
+                result.append(info_fir)
+            for file in files:
+                info_file = get_item_info(os.path.join(root, file))
+                if info_file:
+                    result.append(info_file)
+    else: 
+        info_single_item = get_item_info(base_path)
+        if info_single_item:
+            result.append(info_single_item)
 
-    date_of_creating = datetime.datetime.fromtimestamp(os.path.getctime(base_path)).strftime('%d.%m.%Y')
-    date_of_editing = datetime.datetime.fromtimestamp(os.path.getmtime(base_path)).strftime('%d.%m.%Y')
+    if result == []:
+        raise ValueError("Не собрано данных для обработки.")
+    
+    return result
 
-    size = os.path.getsize(base_path) if item_type == 'file' else None
+def is_changed(old_row, new_row):
+    fields = ['item_type', 'depth', 'date_of_creating',
+            'date_of_editing', 'size', 'extension']
+    return any(old_row[field] != new_row[field] for field in fields)
 
-    extension = os.path.splitext(base_path)[1] if item_type == 'file' else None
+def load_active_rows():
+    cursor.execute("""
+        SELECT location, item_type, depth, date_of_creating,
+            date_of_editing, size, extension
+        FROM data
+        WHERE is_active = 1
+    """)
 
-    data_list.append({
-        'location': location,
-        'item_type' : item_type,
-        'depth' : depth,
-        'date_of_creating': date_of_creating,
-        'date_of_editing' : date_of_editing,
-        'size' : size,
-        'extension': extension
-    })
+    return {
+        row[0]: {
+            'item_type' : row[1],
+            'depth' : row[2],
+            'date_of_creating' : row[3],
+            'date_of_editing' : row[4],
+            'size' : row[5],
+            'extension' : row[6]
+        }
+        for row in cursor.fetchall()
+    }
+    
 
-if os.path.isdir(base_path):
-    for root, dirs, files in os.walk(base_path):
-        get_item_info(root)
-        for f in files:
-            get_item_info(os.path.join(root, f))
-else:
-    get_item_info(base_path)
-
-df = pd.DataFrame(data_list)
-df.to_csv('db/out.csv', index_label = 'id', sep='|')
+now = datetime.datetime.now().strftime('%d.%m.%Y %H:%M:%S')
 
 with sqlite3.connect('database.db') as db:
     cursor = db.cursor()
 
     cursor.execute("""
-            CREATE TABLE IF NOT EXISTS data(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            loction TEXT UNIQUE NOT NULL,
-            item_type VARCHAR,
-            date_of_crefting TEXT,
-            date_of_editing TEXT,
-            size INTEGER,
-            extension TEXT
-        )""")
+                CREATE TABLE IF NOT EXISTS data(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                location TEXT NOT NULL,
+                item_type TEXT,
+                depth INTEGER,
+                date_of_creating DATE,
+                date_of_editing DATE,
+                size INTEGER,
+                extension TEXT,
+                valid_from TIMESTAMP,
+                valid_to TIMESTAMP,
+                is_active INTEGER NOT NULL 
+            )""")
 
-    sql_upsert = """
-    INSERT INTO data(location, item_type, depth, date_of_creating, date_of_editing, size, extension)
-    VALUES(?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(location) DO UPDATE SET
-        item_type = EXCLUDED.item_type,
-        depth = EXCLUDED.depth,
-        date_of_creating = EXCLUDED.date_of_creating,
-        date_of_editing = EXCLUDED.date_of_editing,
-        size = EXCLUDED.size,
-        extension = EXCLUDED.extension
-    """
-    cursor.executemany(sql_upsert, df.values.tolist())
+    active_rows = load_active_rows()
+    scanned_rows = get_data()
 
-    cursor.execute("SELECT * FROM data")                    
+    updates = []
+    inserts = []
+
+    for row in scanned_rows:
+        loc = row['location']
+        old = active_rows.get(loc)
+
+        if old is None:
+            inserts.append((
+                loc, row['item_type'], row['depth'], row['date_of_creating'],
+                row['date_of_editing'], row['size'], row['extension'], now, None, 1
+            ))
+        elif is_changed(old, row):
+            updates.append((now, loc))
+            inserts.append((
+                loc, row['item_type'], row['depth'], row['date_of_creating'],
+                row['date_of_editing'], row['size'], row['extension'], now, None, 1
+            ))
+
+    deleted = [loc for loc in active_rows.keys() if loc not in {row['location'] for row in scanned_rows}]
+    
+    cursor.executemany("""
+        UPDATE data
+        SET valid_to = ?, is_active = 0
+        WHERE location = ? AND is_active = 1
+    """, [(now, loc) for loc in deleted])
+
+    cursor.executemany("""
+        UPDATE data
+        SET valid_to = ?, is_active = 0
+        WHERE location = ? AND is_active = 1
+    """, updates)
+
+    cursor.executemany("""
+        INSERT INTO data(
+            location, item_type, depth, date_of_creating, date_of_editing,
+            size, extension, valid_from, valid_to, is_active
+    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?) """, inserts)
 
 
 
